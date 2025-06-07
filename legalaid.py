@@ -7,7 +7,6 @@ from langchain.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
-import faiss
 import google.generativeai as genai
 
 # Load the PDF and extract text
