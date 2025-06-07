@@ -24,7 +24,7 @@ split_docs = text_splitter.split_documents(docs)
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # Store in ChromaDB
-vector_db = Chroma.from_documents(split_docs, embedding_model) #persist_directory="db")
+vector_db = Chroma.from_documents(split_docs, embedding_model)
 vector_db.persist()
 
 # retriever = vector_db.as_retriever(search_kwargs={"k": 15})  # Retrieve top 3 most relevant chunk
