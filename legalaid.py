@@ -12,7 +12,7 @@ import faiss
 import google.generativeai as genai
 
 # Load the PDF and extract text
-loader = PyPDFLoader("/content/Naija Constitutions.pdf")
+loader = PyPDFLoader("Naija Constitutions.pdf")
 docs = loader.load()
 
 # Increase chunk size and add overlap
