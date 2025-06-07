@@ -1,0 +1,13 @@
+streamlit
+torch
+transformers
+googletrans==4.0.0-rc1
+langchain
+langchain-community
+chromadb
+google.generativeai
+pypdf
+sentence-transformers
+chromadb>=0.4.24
+duckdb
+dotenv
