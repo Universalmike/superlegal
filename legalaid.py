@@ -5,8 +5,6 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.document_loaders import PyPDFLoader
 from langchain.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
 import google.generativeai as genai
 
 # Load the PDF and extract text
