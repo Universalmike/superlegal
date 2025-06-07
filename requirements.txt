@@ -10,4 +10,4 @@ pypdf
 sentence-transformers
 chromadb>=0.4.24
 duckdb
-dotenv
+python-dotenv==1.0.0
