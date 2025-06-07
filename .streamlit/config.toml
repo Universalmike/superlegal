@@ -1,0 +1,2 @@
+[global]
+pythonVersion = "3.10" # Or "3.9" or "3.11". Python 3.10 is a very stable choice.
