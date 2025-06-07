@@ -7,7 +7,7 @@ from langchain.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
-from rank_bm25 import BM25Okapi
+#from rank_bm25 import BM25Okapi
 import faiss
 import google.generativeai as genai
 
