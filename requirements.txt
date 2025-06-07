@@ -11,3 +11,4 @@ sentence-transformers
 chromadb>=0.4.24
 duckdb
 python-dotenv==1.0.0
+faiss
