@@ -1,5 +1,6 @@
 streamlit
 langchain
+langchain-community
 sentence-transformers
 scikit-learn
 python-dotenv
