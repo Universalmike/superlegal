@@ -40,7 +40,7 @@ if query:
     def generate_response(query, relevant_docs):
         context = "\n".join([doc.page_content[:500] for doc in relevant_docs])
         prompt = f"""You are an experienced lawyer. Given the following context:\n\n{context}\n\nAnswer this question:\n{query}
-                    \n\nRespond like we’re in a conversation. Answer the question without mentioning that it is from a provided text"""
+                    \n\nRespond like we’re in a conversation."""
         model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(prompt)
         return response.text
