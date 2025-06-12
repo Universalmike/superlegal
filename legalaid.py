@@ -34,7 +34,7 @@ st.title("SUPERLEGAL - Ask About the Nigerian Constitution")
 query = st.text_input("Ask a Question:")
 
 if query:
-    retriever = vector_db.as_retriever(search_kwargs={"k": 10})
+    retriever = vector_db.as_retriever(search_kwargs={"k": 15})
     retrieved_docs = retriever.get_relevant_documents(query)
 
     def generate_response(query, relevant_docs):
