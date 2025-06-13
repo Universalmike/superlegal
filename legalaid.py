@@ -34,11 +34,11 @@ st.title("SUPERLEGAL - Ask About the Nigerian Constitution")
 query = st.text_input("Ask a Question:")
 
 if query:
-    retriever = vector_db.as_retriever(search_kwargs={"k": 5})  # Slightly more for expansion
+    retriever = vector_db.as_retriever(search_kwargs={"k": 15})  # Slightly more for expansion
     retrieved_docs = retriever.get_relevant_documents(query)
 
     # Query Expansion: add semantic context from top retrieved chunks
-    expansion_text = "\n".join([doc.page_content[:300] for doc in retrieved_docs[:3]])  # Use top 3 for expansion
+    expansion_text = "\n".join([doc.page_content[:300] for doc in retrieved_docs[:9]])  # Use top 3 for expansion
 
     def generate_response(original_query, expansion):
         expanded_query = f"{original_query}\n\nAdditional related context:\n{expansion}"
