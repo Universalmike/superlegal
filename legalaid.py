@@ -29,12 +29,19 @@ split_docs = text_splitter.split_documents(docs)
 # Embedding model
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Create or load FAISS vector store
-if not os.path.exists("faiss_index"):
-    vector_db = FAISS.from_documents(split_docs, embedding_model)
-    vector_db.save_local("faiss_index")
+# Path to FAISS index directory
+faiss_path = "faiss_index"
+
+# Load or build FAISS index
+if os.path.exists(faiss_path):
+    vector_db = FAISS.load_local(faiss_path, embedding_model, allow_dangerous_deserialization=True)
 else:
-    vector_db = FAISS.load_local("faiss_index", embedding_model)
+    loader = PyPDFLoader("Naija Constitutions.pdf")
+    docs = loader.load()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=128)
+    split_docs = text_splitter.split_documents(docs)
+    vector_db = FAISS.from_documents(split_docs, embedding_model)
+    vector_db.save_local(faiss_path)
 
 # Streamlit UI
 st.title("🧠 SUPERLEGAL RAG System")
