@@ -3,54 +3,82 @@ import os
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.document_loaders import PyPDFLoader
-from langchain.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
 import google.generativeai as genai
 
-# Load the PDF and extract text
-loader = PyPDFLoader("Naija Constitutions.pdf")
-docs = loader.load()
+# Initialize chat history
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
 
-# Increase chunk size and add overlap
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1024,  # Increase to 1000-1500 for more context
-    chunk_overlap=128  # Overlap to maintain context across chunks
-)
-
-# Split documents into chunks
-split_docs = text_splitter.split_documents(docs)
-
-# Use an efficient embedding model
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-# Store in ChromaDB
-vector_db = Chroma.from_documents(split_docs, embedding_model)
-vector_db.persist()
-
-# retriever = vector_db.as_retriever(search_kwargs={"k": 15})  # Retrieve top 3 most relevant chunk
-
+# Load environment variables
 load_dotenv()
-
-#Retrieve api key
 api_key = os.getenv("API_KEY")
 genai.configure(api_key=api_key)
 
-st.write("SUPERLEGAL")
-#query = "What are the powers of the state?"
-query = st.text_input("Ask a Question: ")
+# Load and split documents
+loader = PyPDFLoader("Naija Constitutions.pdf")
+docs = loader.load()
+
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1024,
+    chunk_overlap=128
+)
+split_docs = text_splitter.split_documents(docs)
+
+# Embedding model
+embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+# Create or load FAISS vector store
+if not os.path.exists("faiss_index"):
+    vector_db = FAISS.from_documents(split_docs, embedding_model)
+    vector_db.save_local("faiss_index")
+else:
+    vector_db = FAISS.load_local("faiss_index", embedding_model)
+
+# Streamlit UI
+st.title("🧠 SUPERLEGAL RAG System")
+query = st.text_input("Ask a legal question:")
+
+# Language selector
+language = st.selectbox("Choose response language:", ["English", "French", "Yoruba", "Hausa", "Igbo"])
+
+# Function to generate response
+def generate_response(query, relevant_documents, language):
+    context = "\n".join([doc.page_content for doc in relevant_documents])
+    prompt = f"""You are an experienced Nigerian legal assistant. Use the context below to answer the question as if in a conversation:
+    
+Context:
+{context}
+
+Question:
+{query}
+
+Respond clearly and accurately. Translate the answer into {language} at the end.
+"""
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    response = model.generate_content(prompt)
+    return response.text
+
+# Handle query
 if query:
-    retriever = vector_db.as_retriever(search_kwargs={"k": 15})  # Retrieve top 3 most relevant chunk
+    retriever = vector_db.as_retriever(search_kwargs={"k": 15})
     retrieved_docs = retriever.get_relevant_documents(query)
-    
-    def generate_response(query, relevant_documents):
-        context = "\n".join([doc.page_content for doc in relevant_documents])  # Combine the relevant documents into context
-        prompt = f"""You are a experienced lawyer, Given the following information \n{context}\nAnswer the following question as an experienced lawyer:\n{query},
-        ,answer me like we are in a conversation"""
-    
-        # Construct prompt based on the row data
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
-        return response.text
-    
-    response = generate_response(query, retrieved_docs)
+
+    response = generate_response(query, retrieved_docs, language)
+
+    # Show response
+    st.markdown("### 💬 Response")
     st.write(response)
+
+    # Save to chat history
+    st.session_state.chat_history.append((query, response))
+
+# Show chat history
+if st.session_state.chat_history:
+    st.markdown("### 🕓 Chat History")
+    for i, (q, r) in enumerate(st.session_state.chat_history):
+        st.markdown(f"**You:** {q}")
+        st.markdown(f"**AI:** {r}")
+        st.markdown("---")
+
