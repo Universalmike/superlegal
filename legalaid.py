@@ -16,25 +16,39 @@ load_dotenv()
 api_key = os.getenv("API_KEY")
 genai.configure(api_key=api_key)
 
-# Load and split documents
-loader = PyPDFLoader("Naija Constitutions.pdf")
-docs = loader.load()
-
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1024,
-    chunk_overlap=128
-)
-split_docs = text_splitter.split_documents(docs)
-
 # Embedding model
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+@st.cache_resource
+def get_embedding_model():
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+embedding_model = get_embedding_model()
+
+# Load and split documents
+@st.cache_resource
+def load_documents():
+    loader = PyPDFLoader("Naija Constitutions.pdf")
+    docs = loader.load()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=128)
+    return text_splitter.split_documents(docs)
+
+split_docs = load_documents()
 
 # Create or load FAISS vector store
-if not os.path.exists("faiss_index"):
-    vector_db = FAISS.from_documents(split_docs, embedding_model)
-    vector_db.save_local("faiss_index")
-else:
-    vector_db = FAISS.load_local("faiss_index", embedding_model)
+@st.cache_resource
+def load_or_create_faiss(split_docs, embedding_model):
+    faiss_dir = "faiss_index"
+    index_faiss = os.path.join(faiss_dir, "index.faiss")
+    index_pkl = os.path.join(faiss_dir, "index.pkl")
+
+    if os.path.exists(index_faiss) and os.path.exists(index_pkl):
+        return FAISS.load_local(faiss_dir, embedding_model)
+    else:
+        os.makedirs(faiss_dir, exist_ok=True)
+        vector_db = FAISS.from_documents(split_docs, embedding_model)
+        vector_db.save_local(faiss_dir)
+        return vector_db
+
+vector_db = load_or_create_faiss(split_docs, embedding_model)
 
 # Streamlit UI
 st.title("🧠 SUPERLEGAL RAG System")
@@ -47,7 +61,7 @@ language = st.selectbox("Choose response language:", ["English", "French", "Yoru
 def generate_response(query, relevant_documents, language):
     context = "\n".join([doc.page_content for doc in relevant_documents])
     prompt = f"""You are an experienced Nigerian legal assistant. Use the context below to answer the question as if in a conversation:
-    
+
 Context:
 {context}
 
@@ -81,4 +95,3 @@ if st.session_state.chat_history:
         st.markdown(f"**You:** {q}")
         st.markdown(f"**AI:** {r}")
         st.markdown("---")
-
