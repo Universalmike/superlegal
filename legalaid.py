@@ -82,10 +82,13 @@ if query:
     st.session_state.chat_history.append((query, response))
 
 # Show chat history
-if st.session_state.chat_history:
-    st.markdown("### 🕓 Chat History")
-    for i, (q, r) in enumerate(st.session_state.chat_history):
-        st.markdown(f"**You:** {q}")
-        st.markdown(f"**AI:** {r}")
-        st.markdown("---")
+with st.sidebar:
+    st.markdown("🕓 **Chat History Panel**")
+    show_history = st.checkbox("Show chat history", value=False)
 
+if show_history and st.session_state.chat_history:
+    st.markdown("### 🕓 Chat History")
+    for i, (q, r) in enumerate(reversed(st.session_state.chat_history), 1):
+        with st.expander(f"Chat {len(st.session_state.chat_history) - i + 1}: {q[:40]}..."):
+            st.markdown(f"**You:** {q}")
+            st.markdown(f"**AI:** {r}")
