@@ -22,9 +22,9 @@ embedding_model = get_embedder()
 
 # Available legal documents
 DOCUMENT_OPTIONS = {
-    "Nigerian Constitution": "Naija Constitutions.pdf",
-    "Labour Law Act": "LABOUR_ACT.pdf",
-    "Criminal Code": "C38.pdf"
+    "Nigerian Constitution": "documents/Naija Constitutions.pdf",
+    "Labour Law Act": "documents/LABOUR_ACT.pdf",
+    "Criminal Code": "documents/C38.pdf"
 }
 
 # Load and embed selected document (with caching)
