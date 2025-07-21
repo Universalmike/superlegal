@@ -20,6 +20,13 @@ def get_embedder():
 
 embedding_model = get_embedder()
 
+if "sessions" not in st.session_state:
+    st.session_state["sessions"] = {}
+
+if "current_session" not in st.session_state:
+    st.session_state["current_session"] = None
+
+
 # Available legal documents
 DOCUMENT_OPTIONS = {
     "Nigerian Constitution": "documents/Naija Constitutions.pdf",
