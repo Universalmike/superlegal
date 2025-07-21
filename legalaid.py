@@ -142,7 +142,7 @@ if st.button("Send") and query:
     st.session_state.chats[selected_chat].append((query, answer))
 
     # Refresh UI (optional to simulate bottom-scroll)
-    st.experimental_rerun()
+    #st.experimental_rerun()
 
 # for user_q, ai_a in st.session_state.sessions[selected_session]:
 #     st.markdown(f"**You:** {user_q}")
