@@ -144,8 +144,8 @@ if st.button("Send") and query:
     # Refresh UI (optional to simulate bottom-scroll)
     st.experimental_rerun()
 
-for user_q, ai_a in st.session_state.sessions[selected_session]:
-    st.markdown(f"**You:** {user_q}")
-    st.markdown(f"**D Law:** {ai_a}")
-    st.markdown("---")
+# for user_q, ai_a in st.session_state.sessions[selected_session]:
+#     st.markdown(f"**You:** {user_q}")
+#     st.markdown(f"**D Law:** {ai_a}")
+#     st.markdown("---")
 
