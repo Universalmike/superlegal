@@ -1,4 +1,4 @@
-# 🧠 Super Legal – Multi-Document Legal RAG Chat App
+#  Super Legal – Multi-Document Legal RAG Chat App
 
 Super Legal is an AI-powered legal assistant built with **Streamlit**, **LangChain**, and **Google Gemini**.  
 It allows users to ask questions about different Nigerian laws (e.g., the Constitution, Labour Law Act) and get answers in natural language.  
@@ -6,19 +6,19 @@ The system uses **Retrieval-Augmented Generation (RAG)** with **FAISS** for sema
 
 ---
 
-## 🚀 Features
+##  Features
 
-- 📚 **Multi-Document Support** – Switch between Nigerian Constitution, Labour Law Act, etc.  
-- 💬 **Chat-Like Interface** – Conversations look and feel like WhatsApp chats.  
-- 🌍 **Multilingual Responses** – Get answers in English, French, Yoruba, Hausa, or Igbo.  
-- 🕓 **Chat History** – Each chat session saves your previous Q&A for easy reference.  
-- 🔎 **Semantic Search (FAISS)** – Efficient retrieval of relevant sections before answering.  
-- 🤖 **AI-Powered Answers** – Uses Google Gemini (via `google-generativeai`) to generate clear responses.  
-- 📝 **Data Collection for Fine-Tuning** – Automatically logs questions and answers for future model fine-tuning (e.g., FLAN-T5).  
+-  **Multi-Document Support** – Switch between Nigerian Constitution, Labour Law Act, etc.  
+-  **Chat-Like Interface** – Conversations look and feel like WhatsApp chats.  
+-  **Multilingual Responses** – Get answers in English, French, Yoruba, Hausa, or Igbo.  
+-  **Chat History** – Each chat session saves your previous Q&A for easy reference.  
+-  **Semantic Search (FAISS)** – Efficient retrieval of relevant sections before answering.  
+-  **AI-Powered Answers** – Uses Google Gemini (via `google-generativeai`) to generate clear responses.  
+-  **Data Collection for Fine-Tuning** – Automatically logs questions and answers for future model fine-tuning (e.g., FLAN-T5).  
 
 ---
 
-## 🛠 Tech Stack
+##  Tech Stack
 
 - [Streamlit](https://streamlit.io/) – Web UI  
 - [LangChain](https://www.langchain.com/) – RAG pipeline  
