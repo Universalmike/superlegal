@@ -124,7 +124,7 @@ query = st.text_area("Type your question...", height=100)
 # Generate response
 if st.button("Send") and query:
     retriever = vector_db.as_retriever(search_kwargs={"k": 20})
-    docs = retriever.get_relevant_documents(query)
+    docs = retriever.invoke(query)
     context = "\n".join([doc.page_content for doc in docs])
 
     prompt = f"""
@@ -147,6 +147,7 @@ if st.button("Send") and query:
 #     st.markdown(f"**You:** {user_q}")
 #     st.markdown(f"**D Law:** {ai_a}")
 #     st.markdown("---")
+
 
 
 
