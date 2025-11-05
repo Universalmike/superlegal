@@ -1,12 +1,11 @@
 # Multi-Document Legal Chat App with Session-based Chat History (WhatsApp Style)
-
 import streamlit as st
 import os
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import PyPDFLoader
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 import google.generativeai as genai
 
 # Initialize environment
@@ -148,4 +147,5 @@ if st.button("Send") and query:
 #     st.markdown(f"**You:** {user_q}")
 #     st.markdown(f"**D Law:** {ai_a}")
 #     st.markdown("---")
+
 
