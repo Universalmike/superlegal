@@ -1,8 +1,14 @@
 streamlit
 langchain
+langchain-core
+langchain-community
+langchain-openai
+langchain-huggingface
+langchain-google-genai
 sentence-transformers
 faiss-cpu
 google-generativeai
 python-dotenv
-langchain-community
 pypdf
+
+
