@@ -133,7 +133,7 @@ if st.button("Send") and query:
     Imagine you're explaining this to a client in a consultation. What are the key points I should be aware of?
     Respond clearly and accurately in {language} only.
     """
-    model = genai.GenerativeModel("models/gemini-1.5-flash")
+    model = genai.GenerativeModel("models/gemini-2.5-flash")
     result = model.generate_content(prompt)
     answer = result.text
 
@@ -147,6 +147,7 @@ if st.button("Send") and query:
 #     st.markdown(f"**You:** {user_q}")
 #     st.markdown(f"**D Law:** {ai_a}")
 #     st.markdown("---")
+
 
 
 
