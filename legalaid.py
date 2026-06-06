@@ -1,6 +1,9 @@
 # Multi-Document Legal Chat App with Session-based Chat History (WhatsApp Style)
 import streamlit as st
 import os
+import csv
+import html
+from datetime import datetime
 from dotenv import load_dotenv
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
@@ -12,19 +15,22 @@ import google.generativeai as genai
 load_dotenv()
 genai.configure(api_key=os.getenv("API_KEY"))
 
+CSV_LOG_FILE = "chat_log.csv"
+
+def log_to_csv(session_name, document, language, question, answer):
+    file_exists = os.path.exists(CSV_LOG_FILE)
+    with open(CSV_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["timestamp", "session", "document", "language", "question", "answer"])
+        writer.writerow([datetime.now().isoformat(), session_name, document, language, question, answer])
+
 # Embedding model (cached)
 @st.cache_resource
 def get_embedder():
     return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 embedding_model = get_embedder()
-
-if "sessions" not in st.session_state:
-    st.session_state["sessions"] = {}
-
-if "current_session" not in st.session_state:
-    st.session_state["current_session"] = None
-
 
 # Available legal documents
 DOCUMENT_OPTIONS = {
@@ -110,12 +116,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Display chat history (bottom aligned)
+# Display chat history
 st.markdown("### 💬 Chat")
 st.markdown("<div class='chat-box'>", unsafe_allow_html=True)
 for user_q, ai_a in st.session_state.chats[selected_chat]:
-    st.markdown(f"<div class='chat-bubble-user'>🧑‍⚖️ You: {user_q}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='chat-bubble-ai'>🤖 D Law: {ai_a}</div>", unsafe_allow_html=True)
+    safe_q = html.escape(user_q)
+    safe_a = html.escape(ai_a)
+    st.markdown(f"<div class='chat-bubble-user'>🧑‍⚖️ You: {safe_q}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='chat-bubble-ai'>🤖 D Law: {safe_a}</div>", unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 # Question input below chat history
@@ -127,29 +135,21 @@ if st.button("Send") and query:
     docs = retriever.invoke(query)
     context = "\n".join([doc.page_content for doc in docs])
 
-    prompt = f"""
-    You are an experienced Nigerian legal assistant.
-    I have a legal question regarding {query}  Use the context {context} to answer the question:
-    Imagine you're explaining this to a client in a consultation. What are the key points I should be aware of?
-    Respond clearly and accurately in {language} only.
-    """
+    prompt = f"""You are an experienced Nigerian legal assistant.
+A client has asked: {query}
+
+Relevant legal context:
+{context}
+
+Explain the key legal points clearly, as you would in a client consultation.
+Respond in {language} only."""
+
     model = genai.GenerativeModel("models/gemini-2.5-flash")
     result = model.generate_content(prompt)
     answer = result.text
 
-    # Save to session
+    # Save to session and log to CSV
     st.session_state.chats[selected_chat].append((query, answer))
+    log_to_csv(selected_chat, selected_doc, language, query, answer)
 
-    # Refresh UI (optional to simulate bottom-scroll)
-    #st.experimental_rerun()
-
-# for user_q, ai_a in st.session_state.sessions[selected_session]:
-#     st.markdown(f"**You:** {user_q}")
-#     st.markdown(f"**D Law:** {ai_a}")
-#     st.markdown("---")
-
-
-
-
-
-
+    st.rerun()
