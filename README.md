@@ -1,4 +1,4 @@
-#  Super Legal – Multi-Document Legal RAG Chat App
+#  Super Legal: Multi-Document Legal RAG Chat App
 
 Super Legal is an AI-powered legal assistant built with **Streamlit**, **LangChain**, and **Google Gemini**.  
 It allows users to ask questions about different Nigerian laws (e.g., the Constitution, Labour Law Act) and get answers in natural language.  
@@ -56,4 +56,3 @@ Create a new branch (feature-xyz)
 Commit changes
 
 Open a Pull Request
-
