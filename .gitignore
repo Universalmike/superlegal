@@ -1,8 +1,11 @@
 # Secrets
 .env
+backend/.env
 
 # Generated files
 indexes/
+backend/indexes/
+backend/chat_log.csv
 chat_log.csv
 
 # Python
@@ -19,6 +22,8 @@ build/
 venv/
 .venv/
 env/
+backend/venv/
+backend/.venv/
 
 # Streamlit
 .streamlit/secrets.toml
@@ -26,3 +31,7 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
