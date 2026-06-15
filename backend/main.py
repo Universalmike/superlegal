@@ -3,6 +3,7 @@ import csv
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Tuple, Dict
 from dotenv import load_dotenv
@@ -37,6 +38,9 @@ DOCUMENT_OPTIONS = {
     "Criminal Code": os.path.join(BASE_DIR, "documents", "C38.pdf")
 }
 
+# Mount the documents directory statically so files can be fetched by the frontend
+app.mount("/documents", StaticFiles(directory=os.path.join(BASE_DIR, "documents")), name="documents")
+
 # In-memory storage for sessions: { session_id: [ {"sender": "user"|"ai", "text": str}, ... ] }
 chat_sessions: Dict[str, List[Dict[str, str]]] = {
     "Chat 1": []
@@ -44,7 +48,7 @@ chat_sessions: Dict[str, List[Dict[str, str]]] = {
 
 # Cached components in-memory
 embedding_model = None
-vector_stores = {}
+unified_vector_db = None
 
 def get_embedding_model():
     global embedding_model
@@ -53,36 +57,49 @@ def get_embedding_model():
         embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return embedding_model
 
-def load_vector_store(doc_key: str):
-    if doc_key not in DOCUMENT_OPTIONS:
-        raise ValueError(f"Document key '{doc_key}' not found.")
-        
-    if doc_key in vector_stores:
-        return vector_stores[doc_key]
-        
-    file_path = DOCUMENT_OPTIONS[doc_key]
-    store_name = doc_key.replace(" ", "_").lower()
-    faiss_dir = os.path.join(INDEXES_DIR, store_name)
+def load_vector_store():
+    faiss_dir = os.path.join(INDEXES_DIR, "unified")
     faiss_index = os.path.join(faiss_dir, "index.faiss")
     faiss_pkl = os.path.join(faiss_dir, "index.pkl")
     
     embedder = get_embedding_model()
     
     if os.path.exists(faiss_index) and os.path.exists(faiss_pkl):
-        vector_db = FAISS.load_local(faiss_dir, embedder, allow_dangerous_deserialization=True)
+        return FAISS.load_local(faiss_dir, embedder, allow_dangerous_deserialization=True)
     else:
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Source PDF not found at {file_path}")
         os.makedirs(faiss_dir, exist_ok=True)
+        all_split_docs = []
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=128)
-        loader = PyPDFLoader(file_path)
-        docs = loader.load()
-        split_docs = text_splitter.split_documents(docs)
-        vector_db = FAISS.from_documents(split_docs, embedder)
-        vector_db.save_local(faiss_dir)
         
-    vector_stores[doc_key] = vector_db
-    return vector_db
+        for doc_key, file_path in DOCUMENT_OPTIONS.items():
+            if not os.path.exists(file_path):
+                print(f"Warning: Document not found at {file_path}")
+                continue
+            
+            print(f"Loading and indexing: {doc_key}...")
+            loader = PyPDFLoader(file_path)
+            docs = loader.load()
+            
+            # Inject document_name into metadata for filtering and citation tracking
+            for doc in docs:
+                doc.metadata["document_name"] = doc_key
+                
+            split_docs = text_splitter.split_documents(docs)
+            all_split_docs.extend(split_docs)
+            
+        if not all_split_docs:
+            raise FileNotFoundError("No source PDFs found to index.")
+            
+        vector_db = FAISS.from_documents(all_split_docs, embedder)
+        vector_db.save_local(faiss_dir)
+        print("Unified FAISS index successfully created and saved.")
+        return vector_db
+
+def get_unified_vector_db():
+    global unified_vector_db
+    if unified_vector_db is None:
+        unified_vector_db = load_vector_store()
+    return unified_vector_db
 
 def log_to_csv(session_name, document, language, question, answer):
     file_exists = os.path.exists(CSV_LOG_FILE)
@@ -103,9 +120,15 @@ class ChatRequest(BaseModel):
 class CreateSessionRequest(BaseModel):
     session_id: str
 
+class DraftRequest(BaseModel):
+    session_id: str
+    document_type: str
+    api_key: Optional[str] = None
+
 @app.get("/api/documents")
 def get_documents():
-    return list(DOCUMENT_OPTIONS.keys())
+    # Return "All Documents" first, followed by the specific documents
+    return ["All Documents"] + list(DOCUMENT_OPTIONS.keys())
 
 @app.get("/api/sessions")
 def get_sessions():
@@ -143,13 +166,19 @@ def chat(req: ChatRequest):
     
     try:
         genai.configure(api_key=api_key)
-        vector_db = load_vector_store(req.document_key)
+        vector_db = get_unified_vector_db()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load vector store: {str(e)}")
         
     try:
-        # Perform retrieval
-        retriever = vector_db.as_retriever(search_kwargs={"k": 20})
+        # Perform retrieval - filter by document name if a specific document is requested
+        if req.document_key == "All Documents":
+            retriever = vector_db.as_retriever(search_kwargs={"k": 20})
+        else:
+            retriever = vector_db.as_retriever(
+                search_kwargs={"k": 20, "filter": {"document_name": req.document_key}}
+            )
+            
         docs = retriever.invoke(req.query)
         context = "\n".join([doc.page_content for doc in docs])
         
@@ -166,7 +195,7 @@ Conversation History:
 
 The client has asked: {req.query}
 
-Relevant legal context from {req.document_key}:
+Relevant legal context:
 {context}
 
 Explain the key legal points clearly, as you would in a client consultation. Refer to specific sections or articles from the text if available.
@@ -188,9 +217,78 @@ Respond in {req.language} only."""
             "answer": answer,
             "session_id": session_id,
             "references": [
-                {"page_content": doc.page_content, "metadata": getattr(doc, "metadata", {})} 
+                {
+                    "page_content": doc.page_content,
+                    "page": doc.metadata.get("page", 0) + 1,  # 1-indexed for PDF parameters
+                    "filename": os.path.basename(doc.metadata.get("source", "")),
+                    "document_name": doc.metadata.get("document_name", "Unknown Document")
+                } 
                 for doc in docs[:3]  # Return top 3 references for display
             ]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+
+@app.post("/api/draft")
+def draft_document(req: DraftRequest):
+    session_id = req.session_id
+    if session_id not in chat_sessions or not chat_sessions[session_id]:
+        raise HTTPException(status_code=404, detail="No conversation history found in this session. Please ask a legal question first.")
+
+    api_key = req.api_key or os.getenv("API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API Key is missing.")
+
+    try:
+        genai.configure(api_key=api_key)
+
+        # Build conversation context from session history (last 10 messages)
+        history_str = ""
+        for msg in chat_sessions[session_id][-10:]:
+            role = "Client" if msg["sender"] == "user" else "Legal Assistant"
+            history_str += f"{role}: {msg['text']}\n\n"
+
+        # Document-type-specific instructions
+        document_instructions = {
+            "Demand Letter": "Draft a formal Nigerian legal DEMAND LETTER. Include: date, sender and recipient addresses, subject line, clear statement of facts, legal basis (cite specific Nigerian laws), a clear demand with a 14-day deadline, and a signature block.",
+            "Quit Notice": "Draft a formal QUIT NOTICE under Nigerian tenancy law. Include: date, landlord and tenant names/addresses, property address, the legal basis for quit notice, the required notice period per Nigerian law, and a signature block.",
+            "Formal Complaint Letter": "Draft a FORMAL COMPLAINT LETTER to the relevant Nigerian authority (employer, regulatory body, or police). Include: date, sender details, recipient authority, clear description of the complaint, referenced Nigerian laws violated, requested remedy, and signature block.",
+            "Employment Rights Notice": "Draft a formal EMPLOYMENT RIGHTS NOTICE to an employer under the Nigerian Labour Act. Include: date, employee details, employer details, specific rights violations under the Labour Act, a demand for compliance, timeline for response, and signature block.",
+            "Statement of Facts": "Draft a formal STATEMENT OF FACTS document suitable for use by a Nigerian lawyer. Include: date, party names, a numbered chronological account of the material facts, the relevant Nigerian laws implicated, and a declaration of truth."
+        }
+
+        specific_instruction = document_instructions.get(
+            req.document_type,
+            f"Draft a professional {req.document_type} following Nigerian legal standards and conventions."
+        )
+
+        prompt = f"""You are an expert Nigerian legal document drafter with 20 years of experience.
+
+Based on the following conversation between a client and a legal assistant, draft the requested legal document.
+
+CONVERSATION CONTEXT:
+{history_str}
+
+DOCUMENT TO DRAFT: {req.document_type}
+
+INSTRUCTIONS:
+{specific_instruction}
+
+IMPORTANT:
+- Use today's date: {datetime.now().strftime('%d %B %Y')}
+- Use formal, professional Nigerian legal language
+- Reference specific Nigerian laws, acts, or sections where applicable
+- Use [CLIENT NAME], [CLIENT ADDRESS], [RECIPIENT NAME], [RECIPIENT ADDRESS] as placeholders where actual details are unknown
+- The document should be ready to use with minimal editing
+- Do NOT include any commentary, preamble or explanation — output ONLY the document itself"""
+
+        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        result = model.generate_content(prompt)
+
+        return {
+            "document": result.text,
+            "document_type": req.document_type,
+            "generated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Document generation failed: {str(e)}")
