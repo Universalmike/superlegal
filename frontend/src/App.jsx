@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const DOCUMENT_TYPES = [
   { icon: '📜', label: 'Demand Letter' },
@@ -68,7 +68,6 @@ function App() {
   const [language, setLanguage] = useState('English');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('GEMINI_API_KEY') || '');
   const [newSessionName, setNewSessionName] = useState('');
   const [references, setReferences] = useState([]);
   const [errorMsg, setErrorMsg] = useState('');
@@ -106,10 +105,6 @@ function App() {
   const recognitionRef = useRef(null);
   const [isListening, setIsListening] = useState(false);
   const [speakingIdx, setSpeakingIdx] = useState(null);
-
-  useEffect(() => {
-    localStorage.setItem('GEMINI_API_KEY', apiKey);
-  }, [apiKey]);
 
   useEffect(() => {
     fetchDocuments();
@@ -216,10 +211,6 @@ function App() {
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!query.trim() || loading) return;
-    if (!apiKey) {
-      setErrorMsg('Please enter your Google Gemini API Key in the sidebar settings.');
-      return;
-    }
 
     setErrorMsg('');
     const userQuery = query.trim();
@@ -240,7 +231,6 @@ function App() {
           document_key: selectedDoc,
           language,
           query: userQuery,
-          api_key: apiKey,
         }),
       });
       if (res.ok) {
@@ -294,7 +284,6 @@ function App() {
         body: JSON.stringify({
           session_id: activeSession,
           document_type: documentType,
-          api_key: apiKey,
         }),
       });
       if (res.ok) {
@@ -432,7 +421,6 @@ function App() {
 
   const handleConsultIssueSubmit = async () => {
     if (!consultInput.trim() || consultLoading) return;
-    if (!apiKey) { setErrorMsg('Please enter your Gemini API Key first.'); return; }
     const issue = consultInput.trim();
     setConsultIssue(issue);
     setConsultInput('');
@@ -442,7 +430,7 @@ function App() {
       const res = await fetch(`${API_BASE}/api/consultation/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: activeSession, issue, document_key: selectedDoc, api_key: apiKey }),
+        body: JSON.stringify({ session_id: activeSession, issue, document_key: selectedDoc }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -500,7 +488,6 @@ function App() {
             answers: newAnswers,
             document_key: selectedDoc,
             language,
-            api_key: apiKey,
           }),
         });
         if (res.ok) {
@@ -545,15 +532,6 @@ function App() {
           <h1 className="sidebar-title">⚖️ Super Legal</h1>
           <div className="settings-group">
             {errorMsg && <div className="alert-warning">{errorMsg}</div>}
-            <label className="settings-label">Gemini API Key</label>
-            <input
-              id="api-key-input"
-              type="password"
-              className="text-input"
-              placeholder="Paste your API key here..."
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
             <label className="settings-label">Search Scope</label>
             <select
               id="document-selector"

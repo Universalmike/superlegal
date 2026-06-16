@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Dict
 from dotenv import load_dotenv
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -206,7 +206,6 @@ class ChatRequest(BaseModel):
     document_key: str
     language: str
     query: str = Field(..., min_length=1, max_length=2000)
-    api_key: Optional[str] = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -216,14 +215,12 @@ class CreateSessionRequest(BaseModel):
 class DraftRequest(BaseModel):
     session_id: str
     document_type: str
-    api_key: Optional[str] = None
 
 
 class ConsultationStartRequest(BaseModel):
     session_id: str
     issue: str = Field(..., min_length=1, max_length=2000)
     document_key: str
-    api_key: Optional[str] = None
 
 
 class ConsultationAssessRequest(BaseModel):
@@ -233,7 +230,6 @@ class ConsultationAssessRequest(BaseModel):
     answers: List[str]
     document_key: str
     language: str = "English"
-    api_key: Optional[str] = None
 
 
 # ── API Endpoints ────────────────────────────────────────────────────────────
@@ -270,7 +266,7 @@ def chat(req: ChatRequest, background_tasks: BackgroundTasks):
     if not db_session_exists(session_id):
         db_create_session(session_id)
 
-    api_key = req.api_key or os.getenv("API_KEY")
+    api_key = os.getenv("API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=400,
@@ -349,7 +345,7 @@ def draft_document(req: DraftRequest):
             detail="No conversation history found in this session. Please ask a legal question first.",
         )
 
-    api_key = req.api_key or os.getenv("API_KEY")
+    api_key = os.getenv("API_KEY")
     if not api_key:
         raise HTTPException(status_code=400, detail="Gemini API Key is missing.")
 
@@ -408,7 +404,7 @@ IMPORTANT:
 
 @app.post("/api/consultation/start")
 def consultation_start(req: ConsultationStartRequest):
-    api_key = req.api_key or os.getenv("API_KEY")
+    api_key = os.getenv("API_KEY")
     if not api_key:
         raise HTTPException(status_code=400, detail="Gemini API Key is missing.")
 
@@ -449,7 +445,7 @@ Return nothing else."""
 
 @app.post("/api/consultation/assess")
 def consultation_assess(req: ConsultationAssessRequest, background_tasks: BackgroundTasks):
-    api_key = req.api_key or os.getenv("API_KEY")
+    api_key = os.getenv("API_KEY")
     if not api_key:
         raise HTTPException(status_code=400, detail="Gemini API Key is missing.")
 
