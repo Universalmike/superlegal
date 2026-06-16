@@ -2,12 +2,14 @@ import os
 import csv
 import json
 import re
+import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from typing import List, Optional, Tuple, Dict
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict
 from dotenv import load_dotenv
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -16,86 +18,167 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 import google.generativeai as genai
 
-# Setup environment
 load_dotenv()
 
 app = FastAPI(title="Super Legal Backend API", version="1.0.0")
 
-# CORS middleware to allow the React frontend to communicate with the API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INDEXES_DIR = os.path.join(BASE_DIR, "backend", "indexes")
 CSV_LOG_FILE = os.path.join(BASE_DIR, "backend", "chat_log.csv")
+DB_PATH = os.path.join(BASE_DIR, "backend", "superlegal.db")
 
 DOCUMENT_OPTIONS = {
     "Nigerian Constitution": os.path.join(BASE_DIR, "documents", "Naija Constitutions.pdf"),
     "Labour Law Act": os.path.join(BASE_DIR, "documents", "LABOUR_ACT.pdf"),
-    "Criminal Code": os.path.join(BASE_DIR, "documents", "C38.pdf")
+    "Criminal Code": os.path.join(BASE_DIR, "documents", "C38.pdf"),
 }
 
-# Mount the documents directory statically so files can be fetched by the frontend
 app.mount("/documents", StaticFiles(directory=os.path.join(BASE_DIR, "documents")), name="documents")
 
-# In-memory storage for sessions: { session_id: [ {"sender": "user"|"ai", "text": str}, ... ] }
-chat_sessions: Dict[str, List[Dict[str, str]]] = {
-    "Chat 1": []
-}
+# ── SQLite session storage ──────────────────────────────────────────────────
 
-# Cached components in-memory
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db():
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL REFERENCES sessions(session_id),
+                sender     TEXT NOT NULL,
+                text       TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("INSERT OR IGNORE INTO sessions (session_id) VALUES ('Chat 1')")
+
+
+init_db()
+
+
+def db_get_sessions() -> List[str]:
+    with get_db() as conn:
+        return [r["session_id"] for r in conn.execute(
+            "SELECT session_id FROM sessions ORDER BY created_at"
+        ).fetchall()]
+
+
+def db_session_exists(session_id: str) -> bool:
+    with get_db() as conn:
+        return bool(conn.execute(
+            "SELECT 1 FROM sessions WHERE session_id = ?", (session_id,)
+        ).fetchone())
+
+
+def db_create_session(session_id: str):
+    with get_db() as conn:
+        conn.execute("INSERT INTO sessions (session_id) VALUES (?)", (session_id,))
+
+
+def db_get_messages(session_id: str) -> List[Dict]:
+    with get_db() as conn:
+        return [
+            {"sender": r["sender"], "text": r["text"]}
+            for r in conn.execute(
+                "SELECT sender, text FROM messages WHERE session_id = ? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+        ]
+
+
+def db_get_recent_messages(session_id: str, limit: int = 6) -> List[Dict]:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT sender, text FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+            (session_id, limit),
+        ).fetchall()
+    return [{"sender": r["sender"], "text": r["text"]} for r in reversed(rows)]
+
+
+def db_append_messages(session_id: str, pairs: List[Dict]):
+    with get_db() as conn:
+        for msg in pairs:
+            conn.execute(
+                "INSERT INTO messages (session_id, sender, text) VALUES (?, ?, ?)",
+                (session_id, msg["sender"], msg["text"]),
+            )
+
+
+# ── Cached ML components ────────────────────────────────────────────────────
+
 embedding_model = None
 unified_vector_db = None
+
 
 def get_embedding_model():
     global embedding_model
     if embedding_model is None:
-        # Load HuggingFace embeddings
         embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return embedding_model
+
 
 def load_vector_store():
     faiss_dir = os.path.join(INDEXES_DIR, "unified")
     faiss_index = os.path.join(faiss_dir, "index.faiss")
     faiss_pkl = os.path.join(faiss_dir, "index.pkl")
-    
     embedder = get_embedding_model()
-    
+
     if os.path.exists(faiss_index) and os.path.exists(faiss_pkl):
         return FAISS.load_local(faiss_dir, embedder, allow_dangerous_deserialization=True)
-    else:
-        os.makedirs(faiss_dir, exist_ok=True)
-        all_split_docs = []
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=128)
-        
-        for doc_key, file_path in DOCUMENT_OPTIONS.items():
-            if not os.path.exists(file_path):
-                print(f"Warning: Document not found at {file_path}")
-                continue
-            
-            print(f"Loading and indexing: {doc_key}...")
-            loader = PyPDFLoader(file_path)
-            docs = loader.load()
-            
-            # Inject document_name into metadata for filtering and citation tracking
-            for doc in docs:
-                doc.metadata["document_name"] = doc_key
-                
-            split_docs = text_splitter.split_documents(docs)
-            all_split_docs.extend(split_docs)
-            
-        if not all_split_docs:
-            raise FileNotFoundError("No source PDFs found to index.")
-            
-        vector_db = FAISS.from_documents(all_split_docs, embedder)
-        vector_db.save_local(faiss_dir)
-        print("Unified FAISS index successfully created and saved.")
-        return vector_db
+
+    os.makedirs(faiss_dir, exist_ok=True)
+    all_split_docs = []
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=128)
+    for doc_key, file_path in DOCUMENT_OPTIONS.items():
+        if not os.path.exists(file_path):
+            print(f"Warning: Document not found at {file_path}")
+            continue
+        print(f"Loading and indexing: {doc_key}...")
+        loader = PyPDFLoader(file_path)
+        docs = loader.load()
+        for doc in docs:
+            doc.metadata["document_name"] = doc_key
+        all_split_docs.extend(text_splitter.split_documents(docs))
+
+    if not all_split_docs:
+        raise FileNotFoundError("No source PDFs found to index.")
+
+    vector_db = FAISS.from_documents(all_split_docs, embedder)
+    vector_db.save_local(faiss_dir)
+    print("Unified FAISS index created and cached.")
+    return vector_db
+
 
 def get_unified_vector_db():
     global unified_vector_db
@@ -103,7 +186,10 @@ def get_unified_vector_db():
         unified_vector_db = load_vector_store()
     return unified_vector_db
 
-def log_to_csv(session_name, document, language, question, answer):
+
+# ── Logging (runs in background, never blocks a request) ────────────────────
+
+def log_to_csv(session_name: str, document: str, language: str, question: str, answer: str):
     file_exists = os.path.exists(CSV_LOG_FILE)
     os.makedirs(os.path.dirname(CSV_LOG_FILE), exist_ok=True)
     with open(CSV_LOG_FILE, "a", newline="", encoding="utf-8") as f:
@@ -112,100 +198,108 @@ def log_to_csv(session_name, document, language, question, answer):
             writer.writerow(["timestamp", "session", "document", "language", "question", "answer"])
         writer.writerow([datetime.now().isoformat(), session_name, document, language, question, answer])
 
+
+# ── Pydantic models ──────────────────────────────────────────────────────────
+
 class ChatRequest(BaseModel):
     session_id: str
     document_key: str
     language: str
-    query: str
+    query: str = Field(..., min_length=1, max_length=2000)
     api_key: Optional[str] = None
 
+
 class CreateSessionRequest(BaseModel):
-    session_id: str
+    session_id: str = Field(..., min_length=1, max_length=100)
+
 
 class DraftRequest(BaseModel):
     session_id: str
     document_type: str
     api_key: Optional[str] = None
 
+
 class ConsultationStartRequest(BaseModel):
     session_id: str
-    issue: str
+    issue: str = Field(..., min_length=1, max_length=2000)
     document_key: str
     api_key: Optional[str] = None
 
+
 class ConsultationAssessRequest(BaseModel):
     session_id: str
-    issue: str
+    issue: str = Field(..., max_length=2000)
     questions: List[str]
     answers: List[str]
     document_key: str
     language: str = "English"
     api_key: Optional[str] = None
 
+
+# ── API Endpoints ────────────────────────────────────────────────────────────
+
 @app.get("/api/documents")
 def get_documents():
-    # Return "All Documents" first, followed by the specific documents
     return ["All Documents"] + list(DOCUMENT_OPTIONS.keys())
+
 
 @app.get("/api/sessions")
 def get_sessions():
-    return list(chat_sessions.keys())
+    return db_get_sessions()
+
 
 @app.post("/api/sessions")
 def create_session(req: CreateSessionRequest):
     session_id = req.session_id.strip()
-    if not session_id:
-        raise HTTPException(status_code=400, detail="Session ID cannot be empty.")
-    if session_id in chat_sessions:
+    if db_session_exists(session_id):
         raise HTTPException(status_code=400, detail="Session already exists.")
-    chat_sessions[session_id] = []
+    db_create_session(session_id)
     return {"status": "success", "session_id": session_id}
+
 
 @app.get("/api/sessions/{session_id}")
 def get_session_history(session_id: str):
-    if session_id not in chat_sessions:
+    if not db_session_exists(session_id):
         raise HTTPException(status_code=404, detail="Session not found.")
-    return chat_sessions[session_id]
+    return db_get_messages(session_id)
+
 
 @app.post("/api/chat")
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, background_tasks: BackgroundTasks):
     session_id = req.session_id
-    if session_id not in chat_sessions:
-        chat_sessions[session_id] = []
-        
-    # Configure API Key (prefer request parameter, fallback to env)
+    if not db_session_exists(session_id):
+        db_create_session(session_id)
+
     api_key = req.api_key or os.getenv("API_KEY")
     if not api_key:
         raise HTTPException(
-            status_code=400, 
-            detail="Gemini API Key is missing. Please set it in your environment or provide it in the chat interface settings."
+            status_code=400,
+            detail="Gemini API Key is missing. Please set it in the chat interface settings.",
         )
-    
+
     try:
         genai.configure(api_key=api_key)
         vector_db = get_unified_vector_db()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load vector store: {str(e)}")
-        
+
     try:
-        # Perform retrieval - filter by document name if a specific document is requested
         if req.document_key == "All Documents":
             retriever = vector_db.as_retriever(search_kwargs={"k": 20})
         else:
             retriever = vector_db.as_retriever(
                 search_kwargs={"k": 20, "filter": {"document_name": req.document_key}}
             )
-            
+
         docs = retriever.invoke(req.query)
         context = "\n".join([doc.page_content for doc in docs])
-        
-        # Build conversational history for context (last 3 turns / 6 messages)
-        history_str = ""
-        recent_messages = chat_sessions[session_id][-6:]
-        for msg in recent_messages:
-            role = "Client" if msg["sender"] == "user" else "Assistant"
-            history_str += f"{role}: {msg['text']}\n"
-            
+
+        recent = db_get_recent_messages(session_id, limit=6)
+        history_str = "".join(
+            f"{'Client' if m['sender'] == 'user' else 'Assistant'}: {m['text']}\n"
+            for m in recent
+        )
+
         prompt = f"""You are an experienced Nigerian legal assistant.
 Conversation History:
 {history_str}
@@ -218,39 +312,42 @@ Relevant legal context:
 Explain the key legal points clearly, as you would in a client consultation. Refer to specific sections or articles from the text if available.
 Respond in {req.language} only."""
 
-        # Generate response using gemini-2.5-flash
         model = genai.GenerativeModel("models/gemini-2.5-flash")
         result = model.generate_content(prompt)
         answer = result.text
-        
-        # Save to chat history
-        chat_sessions[session_id].append({"sender": "user", "text": req.query})
-        chat_sessions[session_id].append({"sender": "ai", "text": answer})
-        
-        # Log to CSV
-        log_to_csv(session_id, req.document_key, req.language, req.query, answer)
-        
+
+        db_append_messages(session_id, [
+            {"sender": "user", "text": req.query},
+            {"sender": "ai", "text": answer},
+        ])
+        background_tasks.add_task(log_to_csv, session_id, req.document_key, req.language, req.query, answer)
+
         return {
             "answer": answer,
             "session_id": session_id,
             "references": [
                 {
                     "page_content": doc.page_content,
-                    "page": doc.metadata.get("page", 0) + 1,  # 1-indexed for PDF parameters
+                    "page": doc.metadata.get("page", 0) + 1,
                     "filename": os.path.basename(doc.metadata.get("source", "")),
-                    "document_name": doc.metadata.get("document_name", "Unknown Document")
-                } 
-                for doc in docs[:3]  # Return top 3 references for display
-            ]
+                    "document_name": doc.metadata.get("document_name", "Unknown Document"),
+                }
+                for doc in docs[:3]
+            ],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
+
 @app.post("/api/draft")
 def draft_document(req: DraftRequest):
     session_id = req.session_id
-    if session_id not in chat_sessions or not chat_sessions[session_id]:
-        raise HTTPException(status_code=404, detail="No conversation history found in this session. Please ask a legal question first.")
+    messages = db_get_messages(session_id)
+    if not messages:
+        raise HTTPException(
+            status_code=404,
+            detail="No conversation history found in this session. Please ask a legal question first.",
+        )
 
     api_key = req.api_key or os.getenv("API_KEY")
     if not api_key:
@@ -259,24 +356,22 @@ def draft_document(req: DraftRequest):
     try:
         genai.configure(api_key=api_key)
 
-        # Build conversation context from session history (last 10 messages)
         history_str = ""
-        for msg in chat_sessions[session_id][-10:]:
+        for msg in messages[-10:]:
             role = "Client" if msg["sender"] == "user" else "Legal Assistant"
             history_str += f"{role}: {msg['text']}\n\n"
 
-        # Document-type-specific instructions
         document_instructions = {
             "Demand Letter": "Draft a formal Nigerian legal DEMAND LETTER. Include: date, sender and recipient addresses, subject line, clear statement of facts, legal basis (cite specific Nigerian laws), a clear demand with a 14-day deadline, and a signature block.",
             "Quit Notice": "Draft a formal QUIT NOTICE under Nigerian tenancy law. Include: date, landlord and tenant names/addresses, property address, the legal basis for quit notice, the required notice period per Nigerian law, and a signature block.",
             "Formal Complaint Letter": "Draft a FORMAL COMPLAINT LETTER to the relevant Nigerian authority (employer, regulatory body, or police). Include: date, sender details, recipient authority, clear description of the complaint, referenced Nigerian laws violated, requested remedy, and signature block.",
             "Employment Rights Notice": "Draft a formal EMPLOYMENT RIGHTS NOTICE to an employer under the Nigerian Labour Act. Include: date, employee details, employer details, specific rights violations under the Labour Act, a demand for compliance, timeline for response, and signature block.",
-            "Statement of Facts": "Draft a formal STATEMENT OF FACTS document suitable for use by a Nigerian lawyer. Include: date, party names, a numbered chronological account of the material facts, the relevant Nigerian laws implicated, and a declaration of truth."
+            "Statement of Facts": "Draft a formal STATEMENT OF FACTS document suitable for use by a Nigerian lawyer. Include: date, party names, a numbered chronological account of the material facts, the relevant Nigerian laws implicated, and a declaration of truth.",
         }
 
         specific_instruction = document_instructions.get(
             req.document_type,
-            f"Draft a professional {req.document_type} following Nigerian legal standards and conventions."
+            f"Draft a professional {req.document_type} following Nigerian legal standards and conventions.",
         )
 
         prompt = f"""You are an expert Nigerian legal document drafter with 20 years of experience.
@@ -305,10 +400,11 @@ IMPORTANT:
         return {
             "document": result.text,
             "document_type": req.document_type,
-            "generated_at": datetime.now().isoformat()
+            "generated_at": datetime.now().isoformat(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Document generation failed: {str(e)}")
+
 
 @app.post("/api/consultation/start")
 def consultation_start(req: ConsultationStartRequest):
@@ -350,14 +446,15 @@ Return nothing else."""
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Consultation start failed: {str(e)}")
 
+
 @app.post("/api/consultation/assess")
-def consultation_assess(req: ConsultationAssessRequest):
+def consultation_assess(req: ConsultationAssessRequest, background_tasks: BackgroundTasks):
     api_key = req.api_key or os.getenv("API_KEY")
     if not api_key:
         raise HTTPException(status_code=400, detail="Gemini API Key is missing.")
 
-    if req.session_id not in chat_sessions:
-        chat_sessions[req.session_id] = []
+    if not db_session_exists(req.session_id):
+        db_create_session(req.session_id)
 
     try:
         genai.configure(api_key=api_key)
@@ -411,12 +508,17 @@ Respond in {req.language} only."""
         result = model.generate_content(prompt)
         assessment = result.text
 
-        consultation_log = f"[CONSULTATION]\nSituation: {req.issue}\n" + \
-            "\n".join([f"Q: {q}\nA: {a}" for q, a in zip(req.questions, req.answers)])
-        chat_sessions[req.session_id].append({"sender": "user", "text": consultation_log})
-        chat_sessions[req.session_id].append({"sender": "ai", "text": assessment})
-
-        log_to_csv(req.session_id, req.document_key, req.language, consultation_log, assessment)
+        consultation_log = (
+            f"[CONSULTATION]\nSituation: {req.issue}\n"
+            + "\n".join([f"Q: {q}\nA: {a}" for q, a in zip(req.questions, req.answers)])
+        )
+        db_append_messages(req.session_id, [
+            {"sender": "user", "text": consultation_log},
+            {"sender": "ai", "text": assessment},
+        ])
+        background_tasks.add_task(
+            log_to_csv, req.session_id, req.document_key, req.language, consultation_log, assessment
+        )
 
         return {
             "assessment": assessment,
@@ -425,10 +527,10 @@ Respond in {req.language} only."""
                     "page_content": doc.page_content,
                     "page": doc.metadata.get("page", 0) + 1,
                     "filename": os.path.basename(doc.metadata.get("source", "")),
-                    "document_name": doc.metadata.get("document_name", "Unknown Document")
+                    "document_name": doc.metadata.get("document_name", "Unknown Document"),
                 }
                 for doc in docs[:3]
-            ]
+            ],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Consultation assessment failed: {str(e)}")
