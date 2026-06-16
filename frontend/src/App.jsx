@@ -11,6 +11,54 @@ const DOCUMENT_TYPES = [
   { icon: '📝', label: 'Statement of Facts' },
 ];
 
+const NIGERIAN_STATES = [
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT (Abuja)', 'Gombe',
+  'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara',
+  'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau',
+  'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara',
+];
+
+const NBA_BRANCHES = {
+  'FCT (Abuja)': 'NBA Abuja Branch — Plot 1058 Nkwere Street, Area 3, Garki',
+  'Lagos': 'NBA Lagos Branch — 1 Tinubu Square, Lagos Island',
+  'Rivers': 'NBA Port Harcourt Branch — 36 Aggrey Road, Port Harcourt',
+  'Kano': 'NBA Kano Branch — No. 3 Hospital Road, Kano',
+  'Oyo': 'NBA Ibadan Branch — Dugbe, Ring Road, Ibadan',
+  'Enugu': 'NBA Enugu Branch — GRA, Enugu',
+  'Anambra': 'NBA Awka/Onitsha Branch — Awka, Anambra State',
+  'Delta': 'NBA Asaba/Warri Branch — Asaba, Delta State',
+  'Edo': 'NBA Benin City Branch — 1 Lawani Street, Benin City',
+  'Kaduna': 'NBA Kaduna Branch — 5 Ahmadu Bello Way, Kaduna',
+  'Imo': 'NBA Owerri Branch — Douglas Road, Owerri',
+  'Abia': 'NBA Umuahia/Aba Branch — Aba Road, Umuahia',
+  'Benue': 'NBA Makurdi Branch — High Level, Makurdi',
+  'Cross River': 'NBA Calabar Branch — 10 Murtala Mohammed Way, Calabar',
+  'Akwa Ibom': 'NBA Uyo Branch — 3 Abak Road, Uyo',
+  'Kwara': 'NBA Ilorin Branch — Fate Road, Ilorin',
+  'Ogun': 'NBA Abeokuta Branch — Oke-Lantoro, Abeokuta',
+  'Ondo': 'NBA Akure Branch — Alagbaka Estate, Akure',
+  'Osun': 'NBA Osogbo Branch — Oke-Fia, Osogbo',
+  'Ekiti': 'NBA Ado-Ekiti Branch — Ajilosun, Ado-Ekiti',
+  'Niger': 'NBA Minna Branch — Paiko Road, Minna',
+  'Kebbi': 'NBA Birnin-Kebbi Branch — Birnin-Kebbi, Kebbi State',
+  'Sokoto': 'NBA Sokoto Branch — Maiduguri Road, Sokoto',
+  'Zamfara': 'NBA Gusau Branch — Gusau, Zamfara State',
+  'Katsina': 'NBA Katsina Branch — Katsina, Katsina State',
+  'Jigawa': 'NBA Dutse Branch — Dutse, Jigawa State',
+  'Bauchi': 'NBA Bauchi Branch — Jos Road, Bauchi',
+  'Gombe': 'NBA Gombe Branch — Tudun Wada, Gombe',
+  'Yobe': 'NBA Damaturu Branch — Damaturu, Yobe State',
+  'Borno': 'NBA Maiduguri Branch — Maiduguri, Borno State',
+  'Adamawa': 'NBA Yola Branch — Yola, Adamawa State',
+  'Taraba': 'NBA Jalingo Branch — Jalingo, Taraba State',
+  'Plateau': 'NBA Jos Branch — Tudun Wada, Jos',
+  'Nasarawa': 'NBA Lafia Branch — Lafia, Nasarawa State',
+  'Kogi': 'NBA Lokoja Branch — Lokoja, Kogi State',
+  'Bayelsa': 'NBA Yenagoa Branch — Yenagoa, Bayelsa State',
+  'Ebonyi': 'NBA Abakaliki Branch — Abakaliki, Ebonyi State',
+};
+
 function App() {
   const [documents, setDocuments] = useState([]);
   const [selectedDoc, setSelectedDoc] = useState('All Documents');
@@ -39,8 +87,25 @@ function App() {
   const [draftModal, setDraftModal] = useState(null); // { document, document_type, generated_at }
   const [copySuccess, setCopySuccess] = useState(false);
 
+  // Find a Lawyer state
+  const [lawyerModal, setLawyerModal] = useState(null); // null | { violationText: string|null }
+  const [selectedState, setSelectedState] = useState('');
+
+  // Consultation mode state
+  const [consultMode, setConsultMode] = useState(false);
+  const [consultStage, setConsultStage] = useState('issue'); // 'issue' | 'questions' | 'assessing'
+  const [consultIssue, setConsultIssue] = useState('');
+  const [consultQuestions, setConsultQuestions] = useState([]);
+  const [consultAnswers, setConsultAnswers] = useState([]);
+  const [consultCurrentQ, setConsultCurrentQ] = useState(0);
+  const [consultInput, setConsultInput] = useState('');
+  const [consultLoading, setConsultLoading] = useState(false);
+
   const messagesEndRef = useRef(null);
   const popoverRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const [isListening, setIsListening] = useState(false);
+  const [speakingIdx, setSpeakingIdx] = useState(null);
 
   useEffect(() => {
     localStorage.setItem('GEMINI_API_KEY', apiKey);
@@ -58,8 +123,17 @@ function App() {
       setIsPdfOpen(false);
       setActiveRefIdx(null);
       setDraftPopoverIdx(null);
+      window.speechSynthesis?.cancel();
+      setSpeakingIdx(null);
+      recognitionRef.current?.stop();
+      setIsListening(false);
     }
   }, [activeSession]);
+
+  useEffect(() => {
+    window.speechSynthesis?.cancel();
+    setSpeakingIdx(null);
+  }, [language]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -171,7 +245,13 @@ function App() {
       });
       if (res.ok) {
         const data = await res.json();
-        setMessages((prev) => [...prev, { sender: 'ai', text: data.answer }]);
+        const vDetected = detectViolation(data.answer);
+        setMessages((prev) => [...prev, {
+          sender: 'ai',
+          text: data.answer,
+          violationDetected: vDetected,
+          violationText: vDetected ? extractViolationSentence(data.answer) : null,
+        }]);
         setReferences(data.references || []);
       } else {
         const errData = await res.json();
@@ -259,6 +339,204 @@ function App() {
     return messages.slice(0, currentIdx + 1).filter((m) => m.sender === 'ai').length - 1;
   };
 
+  const getLangCode = (lang) => {
+    const codes = { English: 'en-NG', Pidgin: 'en-NG', Yoruba: 'yo', Hausa: 'ha', Igbo: 'ig', French: 'fr-FR' };
+    return codes[lang] || 'en-NG';
+  };
+
+  const detectViolation = (text) => {
+    const patterns = [
+      /\bbreached?\b/i, /\bviolat(ed|ion|ing)\b/i,
+      /\bunlawful(ly)?\b/i, /\billegal(ly)?\b/i, /\bwrongful(ly)?\b/i,
+      /\bcontravene[sd]?\b/i, /\binfring(ed|es|ing)\b/i,
+      /\bentitled to (compensation|damages|remedy|reinstatement)\b/i,
+      /\bwrongful (termination|dismissal)\b/i, /\bunfair dismissal\b/i,
+      /\byour (rights|employer) (has|have|had|was|were) (violated|breached|infringed)\b/i,
+    ];
+    return patterns.some((p) => p.test(text));
+  };
+
+  const extractViolationSentence = (text) => {
+    const clean = text.replace(/\*\*/g, '');
+    const sentences = clean.split(/(?<=[.!?])\s+/);
+    const keyword = /breach|violat|unlawful|illegal|wrongful|contravene|infringe|entitled to compensation/i;
+    const found = sentences.find((s) => keyword.test(s));
+    return found ? found.trim().slice(0, 240) : null;
+  };
+
+  const handleToggleListen = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setErrorMsg('Voice input requires Chrome or Edge browser.');
+      return;
+    }
+    window.speechSynthesis?.cancel();
+    setSpeakingIdx(null);
+    const recognition = new SpeechRecognition();
+    recognition.lang = getLangCode(language);
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (e) => {
+      const transcript = Array.from(e.results).map((r) => r[0].transcript).join('');
+      setQuery(transcript);
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = (e) => {
+      setIsListening(false);
+      if (e.error !== 'no-speech') setErrorMsg(`Mic error: ${e.error}. Please try again.`);
+    };
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  const handleSpeak = (text, idx) => {
+    if (!('speechSynthesis' in window)) {
+      setErrorMsg('Audio playback is not supported in this browser.');
+      return;
+    }
+    window.speechSynthesis.cancel();
+    if (speakingIdx === idx) { setSpeakingIdx(null); return; }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = getLangCode(language);
+    utterance.rate = 0.9;
+    utterance.onend = () => setSpeakingIdx(null);
+    utterance.onerror = () => setSpeakingIdx(null);
+    setSpeakingIdx(idx);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleStartConsultation = () => {
+    window.speechSynthesis?.cancel();
+    setSpeakingIdx(null);
+    recognitionRef.current?.stop();
+    setIsListening(false);
+    setQuery('');
+    setConsultMode(true);
+    setConsultStage('issue');
+    setConsultIssue('');
+    setConsultQuestions([]);
+    setConsultAnswers([]);
+    setConsultCurrentQ(0);
+    setConsultInput('');
+    setMessages((prev) => [
+      ...prev,
+      { sender: 'ai', text: '🧑‍⚖️ Welcome to Consultation Mode.\n\nPlease describe your legal situation briefly — for example: "My employer fired me without notice" or "My landlord refuses to return my deposit." I will then ask you 3 targeted questions before giving a full legal assessment.' },
+    ]);
+  };
+
+  const handleConsultIssueSubmit = async () => {
+    if (!consultInput.trim() || consultLoading) return;
+    if (!apiKey) { setErrorMsg('Please enter your Gemini API Key first.'); return; }
+    const issue = consultInput.trim();
+    setConsultIssue(issue);
+    setConsultInput('');
+    setMessages((prev) => [...prev, { sender: 'user', text: issue }]);
+    setConsultLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/consultation/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: activeSession, issue, document_key: selectedDoc, api_key: apiKey }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setConsultQuestions(data.questions);
+        setConsultCurrentQ(0);
+        setConsultStage('questions');
+        setMessages((prev) => [
+          ...prev,
+          { sender: 'ai', text: `Thank you. I have 3 targeted questions for you.\n\n**Question 1 of ${data.questions.length}:** ${data.questions[0]}` },
+        ]);
+      } else {
+        const err = await res.json();
+        setErrorMsg(err.detail || 'Failed to start consultation.');
+        setConsultMode(false);
+      }
+    } catch {
+      setErrorMsg('Network error starting consultation.');
+      setConsultMode(false);
+    } finally {
+      setConsultLoading(false);
+    }
+  };
+
+  const handleConsultAnswer = async () => {
+    if (!consultInput.trim() || consultLoading) return;
+    const answer = consultInput.trim();
+    const newAnswers = [...consultAnswers, answer];
+    setConsultAnswers(newAnswers);
+    setConsultInput('');
+    setMessages((prev) => [...prev, { sender: 'user', text: answer }]);
+
+    const nextQ = consultCurrentQ + 1;
+
+    if (nextQ < consultQuestions.length) {
+      setConsultCurrentQ(nextQ);
+      setMessages((prev) => [
+        ...prev,
+        { sender: 'ai', text: `**Question ${nextQ + 1} of ${consultQuestions.length}:** ${consultQuestions[nextQ]}` },
+      ]);
+    } else {
+      setConsultStage('assessing');
+      setConsultLoading(true);
+      setMessages((prev) => [
+        ...prev,
+        { sender: 'ai', text: '⚖️ Thank you. Analyzing your situation against Nigerian law — this may take a moment...' },
+      ]);
+      try {
+        const res = await fetch(`${API_BASE}/api/consultation/assess`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: activeSession,
+            issue: consultIssue,
+            questions: consultQuestions,
+            answers: newAnswers,
+            document_key: selectedDoc,
+            language,
+            api_key: apiKey,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setMessages((prev) => [
+            ...prev.slice(0, -1),
+            {
+              sender: 'ai',
+              text: data.assessment,
+              isConsultation: true,
+              violationDetected: true,
+              violationText: extractViolationSentence(data.assessment),
+            },
+          ]);
+          setReferences(data.references || []);
+        } else {
+          const err = await res.json();
+          setErrorMsg(err.detail || 'Assessment failed.');
+        }
+      } catch {
+        setErrorMsg('Network error during assessment.');
+      } finally {
+        setConsultLoading(false);
+        setConsultMode(false);
+        setConsultStage('issue');
+      }
+    }
+  };
+
+  const handleExitConsultation = () => {
+    setConsultMode(false);
+    setConsultStage('issue');
+    setConsultInput('');
+    setConsultLoading(false);
+  };
+
   return (
     <div className="app-container">
       {/* ── SIDEBAR ── */}
@@ -336,6 +614,14 @@ function App() {
             </div>
           </div>
           <div className="chat-header-controls">
+            <button
+              className={`btn-consult-mode${consultMode ? ' active' : ''}`}
+              onClick={consultMode ? handleExitConsultation : handleStartConsultation}
+              disabled={loading}
+              title="Simulate a real lawyer client intake interview"
+            >
+              {consultMode ? '✕ Exit Consultation' : '🧑‍⚖️ Consultation Mode'}
+            </button>
             <label className="settings-label" style={{ margin: 0 }}>Language:</label>
             <select
               id="language-selector"
@@ -368,15 +654,32 @@ function App() {
           {messages.map((msg, index) => {
             const aiIdx = msg.sender === 'ai' ? getAiMessageIdx(messages, index) : null;
             return (
-              <div key={index} className={`message-bubble ${msg.sender}`}>
+              <div key={index} className={`message-bubble ${msg.sender}${msg.isConsultation ? ' consultation-result' : ''}`}>
                 <div className="message-bubble-header">
-                  {msg.sender === 'user' ? '🧑‍⚖️ Client' : '🤖 D Law'}
+                  {msg.sender === 'user' ? '🧑‍⚖️ Client' : msg.isConsultation ? '⚖️ Legal Assessment' : '🤖 D Law'}
+                  {msg.isConsultation && <span className="consult-result-badge">Consultation Result</span>}
                 </div>
                 <div className="message-text">{msg.text}</div>
 
                 {/* Draft action row — only shown on AI messages */}
                 {msg.sender === 'ai' && (
                   <div className="message-actions">
+                    <button
+                      className={`btn-speak${speakingIdx === index ? ' speaking' : ''}`}
+                      onClick={() => handleSpeak(msg.text, index)}
+                      title={speakingIdx === index ? 'Stop audio' : 'Listen to this response'}
+                    >
+                      {speakingIdx === index ? '⏹ Stop' : '🔊 Listen'}
+                    </button>
+                    {msg.violationDetected && (
+                      <button
+                        className="btn-legal-help"
+                        onClick={() => { setSelectedState(''); setLawyerModal({ violationText: msg.violationText }); }}
+                        title="Connect with legal aid or a verified Nigerian lawyer"
+                      >
+                        ⚖️ Find a Lawyer
+                      </button>
+                    )}
                     <button
                       id={`draft-btn-${aiIdx}`}
                       className="btn-draft"
@@ -422,25 +725,88 @@ function App() {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="chat-input-container">
-          <textarea
-            id="chat-input"
-            className="chat-input"
-            placeholder="Ask any Nigerian legal question (e.g. 'My employer fired me without notice. What are my rights?')..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <button
-            id="send-btn"
-            className="btn-send"
-            onClick={handleSendMessage}
-            disabled={!query.trim() || loading}
-            title="Send (Enter)"
-          >
-            ✈️
-          </button>
-        </div>
+        {consultMode ? (
+          <div className="consultation-input-wrapper">
+            <div className="consultation-status-bar">
+              <div className="consult-status-left">
+                <span className="consult-mode-badge">🧑‍⚖️ Consultation Mode</span>
+                {consultStage === 'questions' && (
+                  <>
+                    <div className="consult-progress-dots">
+                      {consultQuestions.map((_, i) => (
+                        <span
+                          key={i}
+                          className={`consult-dot${i < consultCurrentQ ? ' done' : i === consultCurrentQ ? ' active' : ''}`}
+                        />
+                      ))}
+                    </div>
+                    <span className="consult-step-label">Question {consultCurrentQ + 1} of {consultQuestions.length}</span>
+                  </>
+                )}
+                {consultStage === 'assessing' && <span className="consult-step-label">⚖️ Preparing assessment...</span>}
+              </div>
+              <button className="btn-exit-consult" onClick={handleExitConsultation} title="Exit consultation mode">
+                ✕ Exit
+              </button>
+            </div>
+            <div className="chat-input-container">
+              <textarea
+                className="chat-input"
+                placeholder={
+                  consultStage === 'issue'
+                    ? 'Briefly describe your legal situation (e.g. "My employer fired me without notice")...'
+                    : 'Type your answer here...'
+                }
+                value={consultInput}
+                onChange={(e) => setConsultInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    consultStage === 'issue' ? handleConsultIssueSubmit() : handleConsultAnswer();
+                  }
+                }}
+                disabled={consultLoading || consultStage === 'assessing'}
+              />
+              <button
+                className="btn-send"
+                onClick={consultStage === 'issue' ? handleConsultIssueSubmit : handleConsultAnswer}
+                disabled={!consultInput.trim() || consultLoading || consultStage === 'assessing'}
+                title={consultStage === 'issue' ? 'Begin consultation (Enter)' : 'Submit answer (Enter)'}
+              >
+                {consultLoading || consultStage === 'assessing' ? '⏳' : '→'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="chat-input-container">
+            <textarea
+              id="chat-input"
+              className="chat-input"
+              placeholder="Ask any Nigerian legal question (e.g. 'My employer fired me without notice. What are my rights?')..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+            <button
+              type="button"
+              className={`btn-mic${isListening ? ' listening' : ''}`}
+              onClick={handleToggleListen}
+              disabled={loading}
+              title={isListening ? 'Stop listening' : 'Voice input — click to speak'}
+            >
+              {isListening ? '⏹' : '🎤'}
+            </button>
+            <button
+              id="send-btn"
+              className="btn-send"
+              onClick={handleSendMessage}
+              disabled={!query.trim() || loading}
+              title="Send (Enter)"
+            >
+              ✈️
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── CITATION SOURCES PANEL ── */}
@@ -546,6 +912,106 @@ function App() {
             <div className="modal-footer">
               <span>⚠️ Review and replace placeholder fields before sending this document.</span>
               {copySuccess && <span className="copy-success">✅ Copied to clipboard!</span>}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── FIND A LAWYER MODAL ── */}
+      {lawyerModal && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setLawyerModal(null); }}>
+          <div className="modal-container lawyer-modal" id="lawyer-modal">
+            <div className="modal-header">
+              <div className="modal-title-group">
+                <h2 className="modal-title">⚖️ Find Legal Help</h2>
+                <div className="modal-subtitle">Connect with free legal aid or a verified Nigerian lawyer</div>
+              </div>
+              <button className="btn-modal-close" onClick={() => setLawyerModal(null)}>✕</button>
+            </div>
+
+            <div className="modal-body lawyer-modal-body">
+              {lawyerModal.violationText && (
+                <div className="violation-banner">
+                  <span className="violation-banner-icon">⚠️</span>
+                  <div>
+                    <div className="violation-banner-label">Potential legal issue detected</div>
+                    <div className="violation-banner-text">"{lawyerModal.violationText}"</div>
+                  </div>
+                </div>
+              )}
+
+              <div className="lawyer-section-title">🏛️ Free Legal Aid — Available Nationwide</div>
+              <div className="resource-cards">
+                <div className="resource-card">
+                  <div className="resource-card-header">
+                    <span className="resource-card-name">Legal Aid Council of Nigeria (LACON)</span>
+                    <span className="resource-card-badge free">Free</span>
+                  </div>
+                  <div className="resource-card-desc">Government-funded body providing free legal services to Nigerians who cannot afford a lawyer. Has offices in all 36 states.</div>
+                  <div className="resource-card-links">
+                    <a className="resource-link" href="https://legalaidcouncil.gov.ng" target="_blank" rel="noopener noreferrer">🌐 Website</a>
+                    <a className="resource-link" href="tel:+2349080000000">📞 Head Office</a>
+                  </div>
+                </div>
+
+                <div className="resource-card">
+                  <div className="resource-card-header">
+                    <span className="resource-card-name">National Human Rights Commission (NHRC)</span>
+                    <span className="resource-card-badge free">Free</span>
+                  </div>
+                  <div className="resource-card-desc">Handles complaints about human rights and constitutional violations. Can compel government agencies and employers to comply.</div>
+                  <div className="resource-card-links">
+                    <a className="resource-link" href="https://nhrc-ng.org" target="_blank" rel="noopener noreferrer">🌐 Website</a>
+                    <span className="resource-link-text">📍 26 Aguiyi-Ironsi St, Maitama, Abuja</span>
+                  </div>
+                </div>
+
+                <div className="resource-card">
+                  <div className="resource-card-header">
+                    <span className="resource-card-name">Federation of Women Lawyers — FIDA Nigeria</span>
+                    <span className="resource-card-badge">Gender &amp; Family</span>
+                  </div>
+                  <div className="resource-card-desc">Provides free legal services for women's rights, domestic issues, and gender-based discrimination under Nigerian law.</div>
+                  <div className="resource-card-links">
+                    <a className="resource-link" href="https://fidanigeria.org" target="_blank" rel="noopener noreferrer">🌐 Website</a>
+                  </div>
+                </div>
+              </div>
+
+              <div className="lawyer-section-title" style={{ marginTop: '24px' }}>📍 Find a Private Lawyer by State</div>
+              <div className="state-selector-row">
+                <select
+                  className="select-input lawyer-state-select"
+                  value={selectedState}
+                  onChange={(e) => setSelectedState(e.target.value)}
+                >
+                  <option value="">Select your state...</option>
+                  {NIGERIAN_STATES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedState && (
+                <div className="nba-result-card">
+                  <div className="nba-result-header">
+                    <span>🏛️ Nigerian Bar Association (NBA)</span>
+                    <span className="resource-card-badge">Verified</span>
+                  </div>
+                  <div className="nba-branch-name">
+                    {NBA_BRANCHES[selectedState] || `NBA ${selectedState} Branch`}
+                  </div>
+                  <div className="nba-result-desc">
+                    The NBA {selectedState} Branch can refer you to qualified lawyers practicing in {selectedState}. Visit the NBA national portal to search by specialisation (employment, tenancy, criminal).
+                  </div>
+                  <div className="resource-card-links" style={{ marginTop: '12px' }}>
+                    <a className="resource-link primary" href="https://www.nigerianbar.org.ng" target="_blank" rel="noopener noreferrer">🌐 NBA National Portal</a>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <span>⚠️ Super Legal provides legal information, not legal advice. Consult a qualified Nigerian lawyer for your specific situation.</span>
             </div>
           </div>
         </div>

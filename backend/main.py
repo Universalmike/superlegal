@@ -1,5 +1,7 @@
 import os
 import csv
+import json
+import re
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -123,6 +125,21 @@ class CreateSessionRequest(BaseModel):
 class DraftRequest(BaseModel):
     session_id: str
     document_type: str
+    api_key: Optional[str] = None
+
+class ConsultationStartRequest(BaseModel):
+    session_id: str
+    issue: str
+    document_key: str
+    api_key: Optional[str] = None
+
+class ConsultationAssessRequest(BaseModel):
+    session_id: str
+    issue: str
+    questions: List[str]
+    answers: List[str]
+    document_key: str
+    language: str = "English"
     api_key: Optional[str] = None
 
 @app.get("/api/documents")
@@ -292,3 +309,126 @@ IMPORTANT:
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Document generation failed: {str(e)}")
+
+@app.post("/api/consultation/start")
+def consultation_start(req: ConsultationStartRequest):
+    api_key = req.api_key or os.getenv("API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API Key is missing.")
+
+    try:
+        genai.configure(api_key=api_key)
+
+        domain_hint = f" in the context of {req.document_key}" if req.document_key != "All Documents" else ""
+
+        prompt = f"""You are a Nigerian legal intake assistant conducting a structured client consultation{domain_hint}.
+
+A client described their situation as:
+"{req.issue}"
+
+Generate exactly 3 short, targeted follow-up questions to gather the specific facts needed for a thorough legal assessment.
+Rules:
+- Each question must be answerable in 1-2 sentences
+- Focus on legally significant facts: dates, written agreements, notice periods, amounts, job roles, witness presence
+- Do NOT ask for information already stated in the issue description
+- Questions must be specific to Nigerian law context
+
+Return ONLY a JSON array of exactly 3 question strings. Example format:
+["Question one?", "Question two?", "Question three?"]
+
+Return nothing else."""
+
+        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        result = model.generate_content(prompt)
+
+        text = result.text.strip()
+        match = re.search(r'\[.*?\]', text, re.DOTALL)
+        questions = json.loads(match.group() if match else text)
+        questions = [str(q) for q in questions[:3]]
+
+        return {"questions": questions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Consultation start failed: {str(e)}")
+
+@app.post("/api/consultation/assess")
+def consultation_assess(req: ConsultationAssessRequest):
+    api_key = req.api_key or os.getenv("API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API Key is missing.")
+
+    if req.session_id not in chat_sessions:
+        chat_sessions[req.session_id] = []
+
+    try:
+        genai.configure(api_key=api_key)
+        vector_db = get_unified_vector_db()
+
+        retrieval_query = req.issue + " " + " ".join(req.answers)
+
+        if req.document_key == "All Documents":
+            retriever = vector_db.as_retriever(search_kwargs={"k": 20})
+        else:
+            retriever = vector_db.as_retriever(
+                search_kwargs={"k": 20, "filter": {"document_name": req.document_key}}
+            )
+
+        docs = retriever.invoke(retrieval_query)
+        context = "\n".join([doc.page_content for doc in docs])
+
+        qa_summary = f"Situation: {req.issue}\n\n"
+        for i, (q, a) in enumerate(zip(req.questions, req.answers), 1):
+            qa_summary += f"Q{i}: {q}\nA{i}: {a}\n\n"
+
+        prompt = f"""You are an experienced Nigerian legal consultant who has just completed a structured intake interview with a client.
+
+CLIENT INTAKE SUMMARY:
+{qa_summary}
+
+RELEVANT LEGAL CONTEXT FROM NIGERIAN LAW:
+{context}
+
+Provide a comprehensive and definitive legal assessment structured as follows:
+
+**1. Summary of Situation**
+Briefly restate the key legally relevant facts.
+
+**2. Legal Analysis**
+Which Nigerian laws apply and how — cite specific sections and acts.
+
+**3. Your Rights / Legal Position**
+What the client is entitled to under Nigerian law.
+
+**4. Recommended Next Steps**
+Concrete, numbered, actionable advice.
+
+**5. Urgency**
+Whether this is time-sensitive and why (e.g. statutes of limitation, notice deadlines).
+
+Be direct and definitive. This is a formal consultation result.
+Respond in {req.language} only."""
+
+        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        result = model.generate_content(prompt)
+        assessment = result.text
+
+        consultation_log = f"[CONSULTATION]\nSituation: {req.issue}\n" + \
+            "\n".join([f"Q: {q}\nA: {a}" for q, a in zip(req.questions, req.answers)])
+        chat_sessions[req.session_id].append({"sender": "user", "text": consultation_log})
+        chat_sessions[req.session_id].append({"sender": "ai", "text": assessment})
+
+        log_to_csv(req.session_id, req.document_key, req.language, consultation_log, assessment)
+
+        return {
+            "assessment": assessment,
+            "references": [
+                {
+                    "page_content": doc.page_content,
+                    "page": doc.metadata.get("page", 0) + 1,
+                    "filename": os.path.basename(doc.metadata.get("source", "")),
+                    "document_name": doc.metadata.get("document_name", "Unknown Document")
+                }
+                for doc in docs[:3]
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Consultation assessment failed: {str(e)}")
