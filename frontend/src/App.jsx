@@ -244,8 +244,9 @@ function App() {
         }]);
         setReferences(data.references || []);
       } else {
-        const errData = await res.json();
-        setErrorMsg(errData.detail || 'An error occurred.');
+        let msg = 'An error occurred.';
+        try { const e = await res.json(); msg = e.detail || msg; } catch {}
+        setErrorMsg(msg);
         setMessages((prev) => prev.slice(0, -1));
       }
     } catch {
@@ -290,8 +291,9 @@ function App() {
         const data = await res.json();
         setDraftModal(data);
       } else {
-        const errData = await res.json();
-        setErrorMsg(errData.detail || 'Document generation failed.');
+        let msg = 'Document generation failed.';
+        try { const e = await res.json(); msg = e.detail || msg; } catch {}
+        setErrorMsg(msg);
       }
     } catch {
       setErrorMsg('Network error during document generation.');
@@ -442,8 +444,9 @@ function App() {
           { sender: 'ai', text: `Thank you. I have 3 targeted questions for you.\n\n**Question 1 of ${data.questions.length}:** ${data.questions[0]}` },
         ]);
       } else {
-        const err = await res.json();
-        setErrorMsg(err.detail || 'Failed to start consultation.');
+        let msg = 'Failed to start consultation.';
+        try { const e = await res.json(); msg = e.detail || msg; } catch {}
+        setErrorMsg(msg);
         setConsultMode(false);
       }
     } catch {
@@ -504,8 +507,9 @@ function App() {
           ]);
           setReferences(data.references || []);
         } else {
-          const err = await res.json();
-          setErrorMsg(err.detail || 'Assessment failed.');
+          let msg = 'Assessment failed.';
+          try { const e = await res.json(); msg = e.detail || msg; } catch {}
+          setErrorMsg(msg);
         }
       } catch {
         setErrorMsg('Network error during assessment.');
