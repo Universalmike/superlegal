@@ -86,6 +86,11 @@ function App() {
   const [draftModal, setDraftModal] = useState(null); // { document, document_type, generated_at }
   const [copySuccess, setCopySuccess] = useState(false);
 
+  // Digital signature state
+  const [signModal, setSignModal] = useState(null); // null | { document, document_type, generated_at }
+  const [signForm, setSignForm] = useState({ name: '', title: '', barNumber: '', state: '' });
+  const [signLoading, setSignLoading] = useState(false);
+
   // Find a Lawyer state
   const [lawyerModal, setLawyerModal] = useState(null); // null | { violationText: string|null }
   const [selectedState, setSelectedState] = useState('');
@@ -323,6 +328,48 @@ function App() {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleSignDocument = async () => {
+    if (!signModal || signLoading) return;
+    setSignLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/api/sign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: activeSession,
+          document: signModal.document,
+          document_type: signModal.document_type,
+          signer_name: signForm.name.trim(),
+          signer_title: signForm.title.trim(),
+          signer_bar_number: signForm.barNumber.trim(),
+          signer_state: signForm.state,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const bytes = Uint8Array.from(atob(data.pdf_b64), c => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = data.filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        setSignModal(null);
+        setSignForm({ name: '', title: '', barNumber: '', state: '' });
+      } else {
+        let msg = 'Failed to sign document.';
+        try { const e = await res.json(); msg = e.detail || msg; } catch {}
+        setErrorMsg(msg);
+      }
+    } catch {
+      setErrorMsg('Network error during signing.');
+    } finally {
+      setSignLoading(false);
+    }
   };
 
   // Count AI messages for popover index tracking
@@ -590,8 +637,8 @@ function App() {
             <h2 className="chat-header-title">{activeSession}</h2>
             <div className="chat-header-subtitle">
               {selectedDoc === 'All Documents'
-                ? <span>🔍 Searching across <span style={{ color: '#00ffaa' }}>all Nigerian laws</span></span>
-                : <span>Querying: <span style={{ color: '#00ffaa' }}>{selectedDoc}</span></span>
+                ? <span>Searching across <span style={{ color: 'var(--green)' }}>all Nigerian laws</span></span>
+                : <span>Querying: <span style={{ color: 'var(--green)' }}>{selectedDoc}</span></span>
               }
             </div>
           </div>
@@ -624,11 +671,35 @@ function App() {
 
         <div className="messages-container">
           {messages.length === 0 && !loading && (
-            <div style={{ margin: 'auto', textAlign: 'center', opacity: 0.6, maxWidth: '420px' }}>
-              <span style={{ fontSize: '3rem' }}>⚖️</span>
-              <h3>Welcome to Super Legal</h3>
-              <p style={{ fontSize: '0.9rem', lineHeight: 1.6 }}>
-                Ask any question about Nigerian law. D Law searches across the <strong>Constitution</strong>, <strong>Labour Act</strong>, and <strong>Criminal Code</strong> and cites its sources. You can also <strong>generate legal documents</strong> from your conversation.
+            <div style={{
+              margin: 'auto',
+              textAlign: 'center',
+              maxWidth: '400px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '14px',
+            }}>
+              <div style={{
+                width: '52px',
+                height: '52px',
+                borderRadius: '4px',
+                border: '1px solid var(--border-gold)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.6rem',
+                background: 'var(--gold-a12)',
+              }}>⚖️</div>
+              <h3 style={{
+                fontFamily: 'var(--font-display)',
+                fontStyle: 'italic',
+                fontWeight: 700,
+                fontSize: '1.15rem',
+                color: 'var(--text-1)',
+              }}>Super Legal</h3>
+              <p style={{ fontSize: '0.85rem', lineHeight: 1.7, color: 'var(--text-3)' }}>
+                Ask any question about Nigerian law. Searches across the <span style={{ color: 'var(--text-2)' }}>Constitution</span>, <span style={{ color: 'var(--text-2)' }}>Labour Act</span>, and <span style={{ color: 'var(--text-2)' }}>Criminal Code</span>, and cites its sources. Generate legal documents from your conversation.
               </p>
             </div>
           )}
@@ -883,6 +954,13 @@ function App() {
                 <button id="download-doc-btn" className="btn-modal-action primary" onClick={handleDownloadDocument}>
                   ⬇️ Download .txt
                 </button>
+                <button
+                  id="sign-doc-btn"
+                  className="btn-modal-action sign-btn"
+                  onClick={() => { setSignModal(draftModal); setDraftModal(null); }}
+                >
+                  🔏 Sign & Download PDF
+                </button>
                 <button id="close-modal-btn" className="btn-modal-close" onClick={() => setDraftModal(null)}>✕</button>
               </div>
             </div>
@@ -994,6 +1072,104 @@ function App() {
 
             <div className="modal-footer">
               <span>⚠️ Super Legal provides legal information, not legal advice. Consult a qualified Nigerian lawyer for your specific situation.</span>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── SIGN DOCUMENT MODAL ── */}
+      {signModal && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target.className === 'modal-overlay') setSignModal(null); }}>
+          <div className="modal-container sign-modal" id="sign-modal">
+            <div className="modal-header">
+              <div className="modal-title-group">
+                <h2 className="modal-title">
+                  🔏 Sign & Certify Document
+                  <span className="modal-badge">Digital Seal</span>
+                </h2>
+                <div className="modal-subtitle">
+                  Enter your details to stamp and cryptographically sign the PDF.
+                </div>
+              </div>
+              <button className="btn-modal-close" onClick={() => setSignModal(null)}>✕</button>
+            </div>
+
+            <div className="modal-body" style={{ padding: '24px' }}>
+              <div className="sign-form">
+                <div className="sign-form-row">
+                  <div className="sign-form-group">
+                    <label>Full Name / Firm Name *</label>
+                    <input
+                      type="text"
+                      className="text-input"
+                      placeholder="e.g. Adebayo Okafor Esq."
+                      value={signForm.name}
+                      onChange={(e) => setSignForm(prev => ({ ...prev, name: e.target.value }))}
+                    />
+                  </div>
+                  <div className="sign-form-group">
+                    <label>Title / Role *</label>
+                    <input
+                      type="text"
+                      className="text-input"
+                      placeholder="e.g. Barrister & Solicitor"
+                      value={signForm.title}
+                      onChange={(e) => setSignForm(prev => ({ ...prev, title: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="sign-form-row">
+                  <div className="sign-form-group">
+                    <label>NBA Bar Number (optional)</label>
+                    <input
+                      type="text"
+                      className="text-input"
+                      placeholder="e.g. LA/2021/1234"
+                      value={signForm.barNumber}
+                      onChange={(e) => setSignForm(prev => ({ ...prev, barNumber: e.target.value }))}
+                    />
+                  </div>
+                  <div className="sign-form-group">
+                    <label>State *</label>
+                    <select
+                      className="select-input"
+                      value={signForm.state}
+                      onChange={(e) => setSignForm(prev => ({ ...prev, state: e.target.value }))}
+                    >
+                      <option value="">Select state...</option>
+                      {NIGERIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="sign-disclaimer">
+                  <span className="sign-disclaimer-icon">🔒</span>
+                  <div>
+                    <strong>How it works:</strong> A SHA-256 hash of this document is
+                    cryptographically signed and stored. Anyone who receives the PDF can scan the
+                    QR code to confirm your signing details and verify the document has not been
+                    altered since it was signed.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-footer sign-modal-footer">
+              <span style={{ color: 'var(--text-3)', fontSize: '0.78rem' }}>
+                ⚠️ Enter your real details — these appear on the document seal.
+              </span>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button className="btn-modal-action" onClick={() => setSignModal(null)} disabled={signLoading}>
+                  Cancel
+                </button>
+                <button
+                  className="btn-sign"
+                  onClick={handleSignDocument}
+                  disabled={signLoading || !signForm.name.trim() || !signForm.title.trim() || !signForm.state}
+                >
+                  {signLoading ? '⏳ Generating...' : '🔏 Generate Signed PDF'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

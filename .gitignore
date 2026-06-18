@@ -1,10 +1,12 @@
 # Secrets
 .env
 backend/.env
+backend/server_signing.pem
 
 # Generated files
 indexes/
 backend/indexes/
+backend/models/
 backend/chat_log.csv
 chat_log.csv
 backend/superlegal.db
